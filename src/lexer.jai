@@ -1,5 +1,3 @@
-
-
 tokenize :: (using l: *Lexer, filename: string) {
     s := read_entire_file(filename);
     s = replace_crlf_to_lf(s, autofree=true);
@@ -27,31 +25,36 @@ tokenize :: (using l: *Lexer, filename: string) {
 
     while at < buf_end {
         c := at.*;
-        
+
+        if c == #char "\n" {
+            t := array_add(*tokens);
+            t.pos   = cast(s32)(at - buf.data);
+            t.kind  = .LF;
+            t.text  = string.{1, at};
+            at += 1;
+        }
+
         if is_whitespace(c) {
             at += 1;
             continue;
         }
     
-        if is_alpha(c) || c == #char "_" {
-            tokenize_identifier(l);
+        if is_identifier_start_char(c) {
+            t := tokenize_identifier(l);
         } else if is_digit(c) {
             tokenize_digit(l);
         } else {
             left := at;
-            
+
             kind := tokenize_multitoken(l);
             if kind != .INVALID {
                 t := array_add(*tokens);
-                t.pos   = xx (buf_end - left);
+                t.pos   = cast(s32)(at - buf.data);
                 t.kind  = kind;
                 t.text  = string.{at-left, left};
-                
-                ll("found -> |%|\n", t.*);
-                
             } else {
                 t := array_add(*tokens);
-                t.pos   = xx (buf_end - at);
+                t.pos   = cast(s32)(at - buf.data);
                 t.kind  = cast(Token_Kind, c);
                 t.text  = string.{1, at};
                 
@@ -60,6 +63,10 @@ tokenize :: (using l: *Lexer, filename: string) {
             
         }
     }
+    
+    t := array_add(*tokens);
+    t.pos  = cast(s32)(buf_end - buf.data);
+    t.kind = .EOF;
 }
 
 tokenize_digit :: (using l: *Lexer) {
@@ -107,7 +114,7 @@ tokenize_digit :: (using l: *Lexer) {
     t.kind = .NUMERIC_LITERAL;
 }
 
-tokenize_identifier :: (using l: *Lexer) {
+tokenize_identifier :: (using l: *Lexer) -> Token {
     left := at;
     
     at += 1;
@@ -122,12 +129,15 @@ tokenize_identifier :: (using l: *Lexer) {
     }
 
     t := array_add(*tokens);
+    t.pos  = cast(s32)(left - buf.data);
     t.text = string.{at-left, left};
     t.kind = .IDENTIFIER;
 
     if match_with_any_keyword(t.text) {
         t.kind = .KEYWORD;
     }
+
+    return t;
 }
 
 tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
@@ -175,6 +185,11 @@ tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
     if eat_if_match_with("<=") {
         return .LTE;
     }
+
+    if eat_if_match_with("//") {
+        return .LINE_COMMENT;
+    }
+
     if eat_if_match_with("+=") {
         return .ADD_ASSIGN;
     }
@@ -194,8 +209,17 @@ tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
         return .REMAINER_ASSIGN;
     }
     
+    if eat_if_match_with("/*") {
+        return .BLOCK_COMMENT_START;
+    }
+    if eat_if_match_with("/*") {
+        return .BLOCK_COMMENT_END;
+    }
+
     return .INVALID;
 }
+
+#scope_file
 
 peak :: () -> u8 #expand {
     if !(`at+1 < `buf_end) return 0;
@@ -221,6 +245,8 @@ eat_if_match_with :: (with: string) -> (did_eat: bool) #expand {
     return true;
 }
 
+#scope_export
+
 Lexer :: struct {    
     buf: string;
     buf_end: *u8;
@@ -231,9 +257,12 @@ Lexer :: struct {
 }
 
 Token :: struct {
-    pos: s64;
-    text: string;
+    text: string; // rename to "name"
     kind: Token_Kind;
+
+    // @Todo: Character position
+    pos: s32; // byte
+    line: s32;
 }
 
 Token_Kind :: enum u8 {    
@@ -297,6 +326,11 @@ Token_Kind :: enum u8 {
     DIV_ASSIGN; // /=
     REMAINER_ASSIGN; // %=
     
+    // we just ingore the # something comments, gosh...
+    LINE_COMMENT;  // //
+    BLOCK_COMMENT_START; // /*
+    BLOCK_COMMENT_END;   // */
+
     INVALID;
     UNKNOWN;
     IDENTIFIER;

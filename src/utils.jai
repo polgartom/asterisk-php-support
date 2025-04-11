@@ -1,3 +1,17 @@
+range_to_string :: inline (c0: *u8, c1: *u8) -> string {
+    return .{
+        data  = c0,
+        count = c1-c0
+    };
+}
+
+advance :: (arr: [..] $T, step := 1) {
+}
+
+is_identifier_start_char :: (c: u8) -> bool {
+    return is_alpha(c) || c == #char "_";
+}
+
 is_sepa :: inline (c: u8) -> bool {
     return c == #char " " || c == #char "\n" || c == #char "\r" || c == #char "\t" ||
            c == #char "{" || c == #char "}"  ||

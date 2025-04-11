@@ -8,7 +8,20 @@ main :: () {
     
     //scan_dir(*lexer, "./subject");
     
-    tokenize(*lexer, "./subject.php");
+    time := seconds_since_init();
+    defer {
+        print("\n\n--------\n\ntotal: %ms\n\n", (seconds_since_init()-time)*1000);
+    }
+
+    tokenize(*lexer, "./input.php");
+
+    parser: Parser;
+    init_parser(*parser);
+
+    parser.lexer  = *lexer;
+    parser.tokens = lexer.tokens;
+
+    parse(*parser);
 }
 
 scan_dir :: (lexer: *Lexer, dir: string) {
@@ -23,6 +36,10 @@ scan_dir :: (lexer: *Lexer, dir: string) {
     visit_files(dir, recursive=true, lexer, visitor, visit_directories=true, follow_directory_symlinks=false);
 }
 
+dd :: (fmt: string, args: .. Any) #expand {
+    ll(fmt, ..args);
+    assert(false, "\n---------DD---------\n");
+}
 
 ll :: (fmt: string, args: .. Any) #expand {
     s := tprint(fmt, ..args);
