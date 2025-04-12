@@ -13,15 +13,18 @@ main :: () {
         print("\n\n--------\n\ntotal: %ms\n\n", (seconds_since_init()-time)*1000);
     }
 
-    tokenize(*lexer, "./input.php");
+    ok := tokenize(*lexer, "./src/input.php");
+    if !ok return;
 
-#if 1 {
-    print("\n");
-    for lexer.tokens {
-        ll("%\n", it);
+    #if 0{
+        print("\n");
+        for lexer.tokens {
+            ll("%\n", it);
+        }
+        print("\n");
     }
-    print("\n");
-}
+
+    init(*definitions, 256);
 
     parser: Parser;
     init_parser(*parser);
@@ -30,6 +33,27 @@ main :: () {
     parser.tokens = lexer.tokens;
 
     parse(*parser);
+
+    #if 1 {
+        print("\n%\n", definitions.entries.count);
+        for definitions {
+            if it._type == {
+                case .CLASS;
+                    class := cast(*Class_Defn, it).*;
+                    ll("%\n", class);
+
+                    for p: class.properties {
+                        print("\t%\n", cast(*Variable_Defn, p).*);
+                    }
+
+                    continue;
+            }
+
+            // ll("%\n", it.*);
+        }
+        print("\n");
+    }
+
 }
 
 scan_dir :: (lexer: *Lexer, dir: string) {
@@ -45,7 +69,10 @@ scan_dir :: (lexer: *Lexer, dir: string) {
 }
 
 dd :: (fmt: string, args: .. Any) #expand {
+    print("\n---------DD---------\n");
+
     ll(fmt, ..args);
+    
     assert(false, "\n---------DD---------\n");
 }
 

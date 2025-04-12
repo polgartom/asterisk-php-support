@@ -1,17 +1,17 @@
-tokenize :: (using l: *Lexer, filename: string) {
+tokenize :: (using l: *Lexer, filename: string) -> bool {
     s := read_entire_file(filename);
     s = replace_crlf_to_lf(s, autofree=true);
     
     index := find_index_from_left(s, "<?php");
     if index == -1 {
         log_error("% - Unable to locate '<?php'\n", filename);
-        return;
+        return false;
     }
     
     advance(*s, index + "<?php".count);
     if !s {
         log_error("% is empty after '<?php'\n", filename);
-        return;
+        return false;
     }
     
     array_reserve(*tokens, 2048);
@@ -75,6 +75,8 @@ tokenize :: (using l: *Lexer, filename: string) {
     t := array_add(*tokens);
     t.pos  = cast(s32)(buf_end - buf.data);
     t.kind = .EOF;
+
+    return true;
 }
 
 tokenize_digit :: (using l: *Lexer) {
@@ -365,8 +367,11 @@ KEYWORDS_TABLE :: #run -> Table(string, bool) {
 }
 
 KEYWORDS :: string.[
-    "if", "else", "elseif", "return", "for", "while", "do", "fn", "true", "false", "null", "string", "class", "enum", "const", "define", "yield", "static",
-    "continue", "break", "default", "as", "assert", "use", "namespace", "extends", "trait", "interface", "foreach", "float", "int", "integer", 
-    "bool", "boolean", "double", "public", "private", "protected", "defer", "cast", "case", "void", "never", "switch", "match", "die", "exit", "global",
-    "function", "array", "new", "try", "catch", "throw"
+    // "true", "false", "null", "string", 
+    // "bool", "boolean", "double", "array", "float", "int", "integer"
+
+    "if", "else", "elseif", "return", "for", "while", "do", "fn", "class", "enum", "const", "define", "yield", "static",
+    "continue", "break", "default", "as", "assert", "use", "namespace", "extends", "trait", "interface", "foreach",
+    "public", "private", "protected", "defer", "cast", "case", "void", "never", "switch", "match", "die", "exit", "global",
+    "function", "new", "try", "catch", "throw"
 ];
