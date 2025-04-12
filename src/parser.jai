@@ -194,8 +194,14 @@ parse_property :: (parser: *Parser) -> bool {
         }
 
         t = get();
-    } 
+    }
     
+    if type_defn != null && t.kind != .DOLLAR {
+        log_error("Expects a '$' after the type, '%' given.\n", t.text);
+        parser.failed = true;
+        return false;
+    }
+
     if t.kind == .DOLLAR {
         t = next();
         if t.kind != .IDENTIFIER {
@@ -203,6 +209,8 @@ parse_property :: (parser: *Parser) -> bool {
             parser.failed = true;
             return false;
         }
+
+        // @Todo: Primitive type inference
 
         defn := New(Variable_Defn);
         defn.name = copy_string(t.text);
@@ -213,16 +221,46 @@ parse_property :: (parser: *Parser) -> bool {
 
         array_add(*scope.properties, defn);
 
-        // namespace := parser.scope.name;
-        // fqn := join(namespace, var_name, separator="\\");
-        
-        // parser.scope.properties
+        skip_tokens_until(parser, .SEMICOLON);
 
-        // defn := add_definition(fqn, .VARIABLE, parser.scope);
+    } else if t.text == "function" {
+        t = next();
+        if t.kind != .IDENTIFIER {
+            log_error("Expected an identifier after 'function', '%' given.\n", t.text);
+            parser.failed = true;
+            return false;
+        }
 
+        fn_defn := New(Function_Defn);
+        fn_defn.name = copy_string(t.text);
+        fn_defn._type = .FUNCTION;
+        fn_defn.scope = scope;
+        fn_defn.return_type = null;
+        fn_defn.visibility = visibility;
+
+        t = next();
+        if t.kind != .LEFT_PAREN {
+            log_error("Expected a '(' after function name, '%' given.\n", t.text);
+            parser.failed = true;
+            return false;
+        }
+
+        array_add(*scope.methods, fn_defn);
+
+        skip_tokens_until(parser, .LEFT_BRACE);
+
+    } else {
+        log_error("'$' or 'function' are expected instead of '%'.\n", t.text);
+        parser.failed = true;
+        return false;
     }
 
     t = next();
+}
+
+parse_function_parameter_list :: (parser: *Parser) -> bool {
+    
+
 }
 
 parse_function :: (parser: *Parser) -> bool, string {
@@ -404,6 +442,12 @@ parse_line_comment :: (parser: *Parser) {
 
 }
 
+skip_tokens_until :: (using parser: *Parser, kind: Token_Kind) {
+    while !(get().kind == .EOF || get().kind != kind) {
+        next();
+    }
+}
+
 // get_current_namespace :: (using parser: *Parser) -> string {
 //     if !scope return "";
     
@@ -464,7 +508,7 @@ Function_Defn :: struct {
     #as using base: Defn;
     base._type = .FUNCTION;
 
-    return_type: Defn;
+    return_type: *Defn;
     parameters: [..] *Variable_Defn;
 
     visibility: Property_Visibility;

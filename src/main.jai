@@ -40,10 +40,16 @@ main :: () {
             if it._type == {
                 case .CLASS;
                     class := cast(*Class_Defn, it).*;
-                    ll("%\n", class);
+                    print("%\n", class);
 
+                    print("\n[properties]:\n");
                     for p: class.properties {
-                        print("\t%\n", cast(*Variable_Defn, p).*);
+                        print("%\n", cast(*Variable_Defn, p).*);
+                    }
+
+                    print("\n[methods]:\n");
+                    for p: class.methods {
+                        print("%\n", cast(*Function_Defn, p).*);
                     }
 
                     continue;
