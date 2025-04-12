@@ -37,7 +37,6 @@ parse :: (parser: *Parser) {
     print("\n");
 }
 
-// @Todo: 
 parse_class :: (parser: *Parser) {
     t := get();
     assert(t.kind == .KEYWORD && t.text == "class");
@@ -49,56 +48,84 @@ parse_class :: (parser: *Parser) {
         return;
     }
 
-    defn := New(Class_Defn);
-    defn._type = .CLASS;
+    class := New(Class_Defn);
+    class._type = .CLASS;
+    class.scope = parser.scope;
+    class.name = copy_string(t.text);
+    class.resolved = true;
 
     t = next();
+    
     if t.text == "extends" {
         t = next();
         if t.kind != .IDENTIFIER {
-            log_error("Unexpected parent class name '%', expecting an identifier.", t.text);
+            log_error("Unexpected parent class name '%', expecting an identifier after 'extends' keyword.", t.text);
             parser.failed = true;
             return;
         }
+        
+        // @Todo: Try to find the definition
+        class.extends = New(Class_Defn);
+        class.extends._type = .CLASS;
+        class.extends.name = copy_string(t.text);
+        class.extends.resolved = false;
+        
+        t = next();
     } 
     
     if t.text == "implements" {
         t = next();
-        // while t.kind != .LEFT_BRACE {
-        //     if t.kind !=             
-        // }
+        
+        expecting_identifier := true;
+        
+        while true {
+            if expecting_identifier {
+                if t.kind != .IDENTIFIER {
+                    log_error("Unexpected interface name '%', expecting an identifier after 'implements' keyword.\n", t.text);
+                    parser.failed = true;
+                    return;
+                }
+                
+                // @Todo: Try to find the definition
+                defn := New(Defn);
+                defn._type = .INTERFACE;
+                defn.name = copy_string(t.text);
+                defn.resolved = false;
+                
+                array_add(*class.implements, defn);
+                
+                t = next();
+                
+            } else {
+                if t.kind == .COMMA {
+                    expecting_identifier = true;
+                    t = next();
+                } else if t.kind == .LEFT_BRACE {
+                    break;
+                } else {
+                    log_error("Expected comma ',' or left brace '{' after interface '%' identifier.\n", t.text);
+                    parser.failed = true;
+                    return;
+                }
+            }
+        }
+        
+    }
 
-    } else {
-        log_error("Unexpected identifier after class declaration '%', expected keyword 'implements'", t.text);
+    if t.kind != .LEFT_BRACE {
+        log_error("Unexpected '{' token after '%' class declaration, expected '{'.\n", t.text);
         parser.failed = true;
         return;
     }
 
-    if t.kind == .LEFT_BRACE {
-
-    }
-
-    defn.name = copy_string(t.text);
-    defn.scope = parser.scope;
-    
-    array_add(*parser.definitions, defn);
-
-    parser.scope = defn;
+    array_add(*parser.definitions, class);
+    parser.scope = class;
 
     // @Todo: Parse class definition
 }
 
-// https://www.php.net/manual/en/language.namespaces.rules.php
-parse_namespace :: (parser: *Parser) {
+parse_namespaced_name :: (parser: *Parser) -> bool, string {
     t := get();
-    assert(t.kind == .KEYWORD && t.text == "namespace");
-
-    // if parser.scope != .NAMESPACE {
-    //     log_error("Yo\n");
-    //     return;
-    // }
-
-    t = next();
 
     starts_with_backslash := false;
     backslash             := false;
@@ -115,7 +142,7 @@ parse_namespace :: (parser: *Parser) {
         t = get();
         if t.kind == .EOF {
             parser.failed = true;
-            return;
+            return false, "";
         }
 
         c1 = t.text.data;
@@ -124,7 +151,7 @@ parse_namespace :: (parser: *Parser) {
             if backslash {
                 log_error("Unexpected namespaced name '%', expecting an identifier\n", range_to_string(c0, c1));
                 parser.failed = true;
-                return;
+                return false, "";
             }
 
             backslash = true;
@@ -135,41 +162,85 @@ parse_namespace :: (parser: *Parser) {
         } else if t.kind == .SEMICOLON {
             if backslash {
                 log_error("Unexpected namespaced name '%', expecting an identifier\n", range_to_string(c0, c1));
-                parser.failed = true;
-                return;
+                return false, "";
             }
 
             break;
         } else {
             log_error("Unexpected token '%', expected tokens %\n", t.text, Token_Kind.[.IDENTIFIER, .BACKSLASH, .SEMICOLON]);
-            return;
+            return false, "";
         }
 
         next();
     }
 
     s := range_to_string(c0, c1);
+    return true, s;
+} 
+
+// https://www.php.net/manual/en/language.namespaces.rules.php
+parse_namespace :: (parser: *Parser) {
+    t := get();
+    assert(t.kind == .KEYWORD && t.text == "namespace");
+    next();
+    
+    valid, name := parse_namespaced_name(parser);
+    if !valid {
+        parser.failed = true;
+        return;
+    }
 
     defn := New(Defn);
-    defn.name = copy_string(s);
+    defn.name = copy_string(name);
     defn._type = .NAMESPACE;
-    defn.scope = parser.scope;
+    defn.resolved = true;
+    // defn.scope = parser.scope;
+        
+    array_add(*parser.definitions, defn);
+    parser.scope = defn;
 }
 
 parse_use :: (parser: *Parser) {
     t := get();
     assert(t.kind == .KEYWORD && t.text == "use");
+    next();
 
     scope := parser.scope;
-    maybe_trait_load := scope && scope._type == .CLASS;
+    is_trait_load := scope && scope._type == .CLASS;
+    
+    if is_trait_load {
+        
+    } else {
+         valid, name := parse_namespaced_name(parser); // FQN name? full qualified name
+         if !valid {
+             return;
+         }
+         
+         //ll("%\n", name);
+         
+         if !scope || scope._type == .NAMESPACE {
+             defn := New(Defn);
+             defn._type = .UNKNOWN;
+             defn.name = copy_string(name);
+             defn.scope = null;
+             defn.resolved = false;
+             
+             array_add(*parser.definitions, defn);
+             
+         } else {
+             log_error("Invalid import %\n", name); // @Todo: Better message
+             parser.failed = true;
+             return;
+         }
+    }
 
     // defn := parser.definitions[parser.definitions.count-1];
     // if !(defn._type == .USE && (!defn.scope || defn.scope._type != .NAMESPACE)) {
     //     // log_error();
     //     return;
     // }
-
-    t = next();
+ 
+    // t = next();
 }
 
 parse_block_comment :: (parser: *Parser) {
@@ -213,7 +284,7 @@ Class_Defn :: struct {
     base._type = .CLASS;
 
     extends: *Class_Defn;
-
+    implements: [..] *Defn; // @Todo: Trait_Defn
     methods: [..] Function_Defn;
 }
 
@@ -245,6 +316,8 @@ Defn :: struct {
 
     line: s32;
     pos:  s32;
+    
+    resolved: bool;
 }
 
 Defn_Type :: enum u8 {
@@ -254,6 +327,8 @@ Defn_Type :: enum u8 {
     USE;
     CLASS;
     CLASS_PARAMETER;
+    INTERFACE;
+    TRAIT;
     FUNCTION;
     FUNCTION_PARAMETER;
 }
@@ -266,6 +341,8 @@ Parser :: struct {
 
     scope: *Defn;
     definitions: [..] *Defn;
+    
+    // imports [..] *Defn;
 }
 
 #scope_file

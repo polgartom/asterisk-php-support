@@ -15,6 +15,14 @@ main :: () {
 
     tokenize(*lexer, "./input.php");
 
+#if 1 {
+    print("\n");
+    for lexer.tokens {
+        ll("%\n", it);
+    }
+    print("\n");
+}
+
     parser: Parser;
     init_parser(*parser);
 

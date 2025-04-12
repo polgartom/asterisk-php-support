@@ -25,7 +25,7 @@ tokenize :: (using l: *Lexer, filename: string) {
 
     while at < buf_end {
         c := at.*;
-
+/*
         if c == #char "\n" {
             t := array_add(*tokens);
             t.pos   = cast(s32)(at - buf.data);
@@ -33,7 +33,7 @@ tokenize :: (using l: *Lexer, filename: string) {
             t.text  = string.{1, at};
             at += 1;
         }
-
+*/
         if is_whitespace(c) {
             at += 1;
             continue;
@@ -48,6 +48,14 @@ tokenize :: (using l: *Lexer, filename: string) {
 
             kind := tokenize_multitoken(l);
             if kind != .INVALID {
+                if kind == .LINE_COMMENT {
+                    at += 2; // jump from '//'
+                    while at < buf_end {
+                        defer at += 1;
+                        if at.* == #char "\n" break;
+                    }
+                }
+            
                 t := array_add(*tokens);
                 t.pos   = cast(s32)(at - buf.data);
                 t.kind  = kind;
