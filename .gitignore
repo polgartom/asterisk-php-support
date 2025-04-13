@@ -4,4 +4,7 @@
 *.pdb
 *.rdi
 
+main
+out.txt
+
 *.php

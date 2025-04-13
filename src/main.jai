@@ -16,7 +16,7 @@ main :: () {
     ok := tokenize(*lexer, "./src/input.php");
     if !ok return;
 
-    #if 0{
+    #if 0 {
         print("\n");
         for lexer.tokens {
             ll("%\n", it);
@@ -34,7 +34,7 @@ main :: () {
 
     parse(*parser);
 
-    #if 1 {
+    #if 0 {
         print("\n%\n", definitions.entries.count);
         for definitions {
             if it._type == {
@@ -49,7 +49,23 @@ main :: () {
 
                     print("\n[methods]:\n");
                     for p: class.methods {
-                        print("%\n", cast(*Function_Defn, p).*);
+                        defn := cast(*Function_Defn, p);
+                        print("% -> ", defn.name);
+                        print("args: ");
+                        if !defn.parameters then print("<NO PARAMS> ; ");
+                        for param : defn.parameters {
+                            print("% (", param.name);
+                            for type, i : param.types {
+                                print("%", type.name);
+                                if i != param.types.count-1 print(",");
+                            }
+                            print(") ; ");
+                        }
+                        print("return types: ");
+                        for type : defn.return_types {
+                            print("%", type.name);
+                        }
+                        print("\n");
                     }
 
                     continue;

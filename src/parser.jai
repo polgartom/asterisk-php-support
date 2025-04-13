@@ -17,6 +17,12 @@ parse :: (parser: *Parser) {
                 } else if t.text == "class" {
                     parse_class(parser);
 
+                    // if t.kind != .RIGHT_BRACE {
+                    //     log_error("Expected '}' after class definition, '%' given.\n", t.kind);
+                    //     parser.failed = true;
+                    //     break;
+                    // }
+
                 } else if t.text == "use" {
                     parse_use(parser);
 
@@ -121,24 +127,34 @@ parse_class :: (parser: *Parser) {
         return;
     }
 
-    // array_add(*parser.definitions, class);
+    parser.block_index += 1;
+    class.block_index = parser.block_index;
     parser.scope = class;
 
     // @Todo: Parse class definition
 
     t = next();
     while t.kind != .EOF {
-        // ll("> %\n", t);
-
         if t.kind == .KEYWORD {
             if t.text == {
                 case "const"; assert(false); // @Todo: 
-                case "public";
-                    parse_property(parser);
-                case "protected";
-                    parse_property(parser);
+                case "public"; #through;
+                case "protected"; #through;
                 case "private";
-                    parse_property(parser);
+                    ok := parse_property(parser);
+                    if !ok {
+                        report_error(parser, "Invalid property\n");
+                        assert(false); // @Temporary
+                        return;
+                    }
+            }
+        } else if t.kind == .LEFT_BRACE {
+            parser.block_index += 1;
+        } else if t.kind == .RIGHT_BRACE {
+            parser.block_index -= 1;
+            if parser.block_index == class.block_index {
+                ll("found end of the '%' class.\n", class.name);
+                return;
             }
         }
 
@@ -216,7 +232,7 @@ parse_property :: (parser: *Parser) -> bool {
         defn.name = copy_string(t.text);
         defn._type = .VARIABLE;
         defn.scope = scope;
-        defn.type = type_defn;
+        array_add(*defn.types, type_defn);
         defn.visibility = visibility;
 
         array_add(*scope.properties, defn);
@@ -231,11 +247,14 @@ parse_property :: (parser: *Parser) -> bool {
             return false;
         }
 
+
         fn_defn := New(Function_Defn);
-        fn_defn.name = copy_string(t.text);
+        
+        fqn := join(parser.scope.name, t.text, separator="\\");
+        fn_defn.name = fqn;
+
         fn_defn._type = .FUNCTION;
         fn_defn.scope = scope;
-        fn_defn.return_type = null;
         fn_defn.visibility = visibility;
 
         t = next();
@@ -244,10 +263,58 @@ parse_property :: (parser: *Parser) -> bool {
             parser.failed = true;
             return false;
         }
+        t = next();
 
-        array_add(*scope.methods, fn_defn);
+        ok, params := parse_comma_separated_function_parameter_list(parser);
+        if !ok {
+            report_error(parser, "Invalid parameter list\n");
+            parser.failed = true;
+            return false;
+        }
+        t = get();
+        
+        if t.kind != .RIGHT_PAREN {
+            log_error("Expected a ')' after function parameters, '%' given.\n", t.text);
+            parser.failed = true;
+            return false;
+        }
+        t = next();
 
-        skip_tokens_until(parser, .LEFT_BRACE);
+        fn_defn.parameters = params;
+        array_add(*scope.methods, fn_defn); // At this point, it's kind of valid, so we can add to the method list
+
+        if t.kind == .COLON {
+            t = next();
+            found, return_types := parse_pipe_separated_type_list(parser);
+            if found {
+                fn_defn.return_types = return_types;
+            }
+        }
+
+        t = get();
+
+        if t.kind == .SEMICOLON {
+
+        } else if t.kind == .LEFT_BRACE {
+            parser.block_index += 1;
+            fn_defn.block_index = parser.block_index;
+            
+            while t.kind != .EOF {
+                if t.kind == .LEFT_BRACE {
+                    parser.block_index += 1;
+                } else if t.kind == .RIGHT_BRACE {
+                    parser.block_index -= 1;
+                    if parser.block_index == fn_defn.block_index {
+                        // ll("found end of the '%' method.\n", fn_defn.name);
+                        return true;
+                    }
+                }
+
+                t = next();
+            }
+        }
+
+        return false;
 
     } else {
         log_error("'$' or 'function' are expected instead of '%'.\n", t.text);
@@ -256,17 +323,11 @@ parse_property :: (parser: *Parser) -> bool {
     }
 
     t = next();
+
+    return true;
 }
 
-parse_function_parameter_list :: (parser: *Parser) -> bool {
-    
-
-}
-
-parse_function :: (parser: *Parser) -> bool, string {
-
-}
-
+// @Cleanup: Naming
 parse_namespaced_name :: (parser: *Parser) -> bool, string {
     t := get();
 
@@ -318,12 +379,16 @@ parse_namespaced_name :: (parser: *Parser) -> bool, string {
     }
 
     s := range_to_string(c0, c1);
-    return true, s;
+    return s.count > 0, s;
 } 
 
 add_definition :: (fqn: string, $type: Defn_Type, scope: *Defn = null) -> *Defn {
     defn: *Defn;
+
     #if type == {
+        case .UNKNOWN;
+            defn = New(Defn);
+            defn.resolved = false;
         case .PRIMITIVE;
             defn = New(Defn);
             defn.resolved = true;
@@ -332,6 +397,7 @@ add_definition :: (fqn: string, $type: Defn_Type, scope: *Defn = null) -> *Defn 
             defn = New(Class_Defn);
         case .VARIABLE;
             defn = New(Variable_Defn);
+            defn.resolved = true; // do we want to explicitly specify it. The variable always resolved, except its type
         case .FUNCTION;
             defn = New(Function_Defn);
         case .NAMESPACE;
@@ -442,21 +508,131 @@ parse_line_comment :: (parser: *Parser) {
 
 }
 
-skip_tokens_until :: (using parser: *Parser, kind: Token_Kind) {
-    while !(get().kind == .EOF || get().kind != kind) {
-        next();
+parse_pipe_separated_type_list :: (parser: *Parser) -> bool, [..] *Defn {
+    result: [..] *Defn;
+
+    t := get();
+    if !(t.kind == .IDENTIFIER || t.kind == .BACKSLASH) return false, result;
+
+    type_parsed := false;
+    while t.kind != .EOF {
+        // ll("> %\n", t);
+
+        if t.kind == .IDENTIFIER || t.kind == .BACKSLASH {
+            if type_parsed return false, result;
+            type_parsed = true;
+
+            ok, name := parse_namespaced_name(parser);
+            if !ok return false, result;
+
+            t = get();
+
+            namespaced_globally := false;
+            if starts_with(name, "\\") {
+                namespaced_globally = true;
+                advance(*name, 1);
+            }
+
+            type_defn, found := table_find(*definitions, name);
+            if !found {
+                name = copy_string(name);
+                type_defn = add_definition(name, .UNKNOWN, parser.scope);
+            }
+
+            array_add(*result, type_defn);
+
+            continue;
+
+        } else if t.kind == .PIPE {
+            if !type_parsed return false, result;
+            type_parsed = false;
+        } else {
+            // ll("%\n", get());
+            break;
+        }
+
+        t = next();
     }
+
+    // ll("last token: %\n", t);
+
+    return type_parsed, result;
 }
 
-// get_current_namespace :: (using parser: *Parser) -> string {
-//     if !scope return "";
-    
-//     builder: String_Builder;
+parse_comma_separated_function_parameter_list :: (parser: *Parser) -> bool, [..] *Variable_Defn {
+    result: [..] *Variable_Defn;
 
-//     if scope._type == .CLASS {
-//         append(*builder,     
-//     }
-// }
+    t := get();
+    if !(t.kind == .IDENTIFIER || t.kind == .DOLLAR) return true, result;
+
+    // @Todo: The visibility keywords are valid in the __constructor(), so we need to check that at some point.
+
+    param_parsed := false;
+    while t.kind != .EOF {
+        has_type_declaration, types := parse_pipe_separated_type_list(parser);
+        t = get();
+
+        if t.kind == .DOLLAR {
+            if param_parsed {
+                return false, result;
+            }
+            param_parsed = true;
+
+            t = next();
+            if t.kind != .IDENTIFIER {
+                report_error(parser, "Identifier is expected after '$' in the function parameter list, '%' given\n", t.text);
+                return false, result;
+            }
+
+            name := copy_string(t.text);
+            defn := cast(*Variable_Defn) add_definition(name, .VARIABLE, parser.scope);
+            defn.types = types;
+            array_add(*result, defn);
+
+            t = next();
+
+            if t.kind == .ASSIGN {
+                t = next();
+                ok, types := parse_pipe_separated_type_list(parser);
+
+                if !ok || types.count > 1 return false, result;
+                t = get();
+            }
+
+            continue;
+
+        } else if t.kind == .COMMA {
+            if !param_parsed {
+                return false, result;
+            }
+            param_parsed = false;
+
+        } else {
+            break;
+        }
+
+        t = next();
+    }
+
+    // ll("last token: %\n", t);
+
+    return true, result;
+}
+
+report_error :: (parser: *Parser, fmt: string, args: .. Any) {
+    line_str := get_line_as_string(parser.lexer, get().line);
+    s := tprint(fmt, ..args);
+    print("[error] |%| %:% -> %\n", line_str, get().line, get().pos, s);
+} @PrintLike
+
+skip_tokens_until :: (using parser: *Parser, kind: Token_Kind) -> (found: bool) {
+    t := get();
+    while t.kind == .EOF {
+        if t.kind == kind return true;
+    }
+
+    return false;
+}
 
 init_parser :: (parser: *Parser) {
     add_definition("bool", .PRIMITIVE);
@@ -497,7 +673,7 @@ Variable_Defn :: struct {
     #as using base: Defn;
     base._type = .VARIABLE;
 
-    type: *Defn;
+    types: [..] *Defn;
 
     visibility: Property_Visibility;
     is_static: bool;
@@ -508,7 +684,7 @@ Function_Defn :: struct {
     #as using base: Defn;
     base._type = .FUNCTION;
 
-    return_type: *Defn;
+    return_types: [..] *Defn;
     parameters: [..] *Variable_Defn;
 
     visibility: Property_Visibility;
@@ -522,12 +698,14 @@ Defn :: struct {
     _type: Defn_Type; // @Cleanup rename it to kind
 
     scope: *Defn;
+    block_index: s32;
 
     line: s32;
     pos:  s32;
     
     resolved: bool;
     intrinsic: bool;
+
 }
 
 Defn_Type :: enum u8 {
@@ -562,6 +740,7 @@ Parser :: struct {
     failed := false;
 
     scope: *Defn;
+    block_index: s32;
     // definitions: [..] *Defn;
     
     // imports [..] *Defn;

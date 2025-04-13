@@ -1,11 +1,19 @@
 range_to_string :: inline (c0: *u8, c1: *u8) -> string {
+    if !c0 || !c1 return "";
+
     return .{
         data  = c0,
         count = c1-c0
     };
 }
 
-advance :: (arr: [..] $T, step := 1) {
+advance :: (arr: [..] $T, step := 1) -> [..] T {
+    assert(arr.count - step > 0);
+
+    arr.data += step;
+    arr.count -= step;
+
+    return arr;
 }
 
 is_identifier_start_char :: (c: u8) -> bool {

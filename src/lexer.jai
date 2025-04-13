@@ -25,15 +25,9 @@ tokenize :: (using l: *Lexer, filename: string) -> bool {
 
     while at < buf_end {
         c := at.*;
-/*
-        if c == #char "\n" {
-            t := array_add(*tokens);
-            t.pos   = cast(s32)(at - buf.data);
-            t.kind  = .LF;
-            t.text  = string.{1, at};
-            at += 1;
-        }
-*/
+
+        if c == #char "\n" l.line += 1;
+
         if is_whitespace(c) {
             at += 1;
             continue;
@@ -58,22 +52,26 @@ tokenize :: (using l: *Lexer, filename: string) -> bool {
             
                 t := array_add(*tokens);
                 t.pos   = cast(s32)(at - buf.data);
+                t.line  = l.line;
                 t.kind  = kind;
                 t.text  = string.{at-left, left};
             } else {
                 t := array_add(*tokens);
                 t.pos   = cast(s32)(at - buf.data);
+                t.line  = l.line;
                 t.kind  = cast(Token_Kind, c);
                 t.text  = string.{1, at};
                 
+                // if t.kind == .LF then l.line += 1;
+
                 at += 1;
             }
-            
         }
     }
     
     t := array_add(*tokens);
     t.pos  = cast(s32)(buf_end - buf.data);
+    t.line  = l.line;
     t.kind = .EOF;
 
     return true;
@@ -119,7 +117,8 @@ tokenize_digit :: (using l: *Lexer) {
     }
 
     t := array_add(*l.tokens);
-    t.pos   = 1;
+    t.pos  = cast(s32)(left - buf.data);
+    t.line = l.line;
     t.text = string.{at-left, left};
     t.kind = .NUMERIC_LITERAL;
 }
@@ -140,6 +139,7 @@ tokenize_identifier :: (using l: *Lexer) -> Token {
 
     t := array_add(*tokens);
     t.pos  = cast(s32)(left - buf.data);
+    t.line  = l.line;
     t.text = string.{at-left, left};
     t.kind = .IDENTIFIER;
 
@@ -229,6 +229,20 @@ tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
     return .INVALID;
 }
 
+get_line_as_string :: (lexer: *Lexer, line: s32) -> string {
+    c0: *u8;
+    c1: *u8;
+
+    for lexer.tokens {
+        if it.line == line {
+            if !c0 then c0 = it.text.data;
+            c1 = it.text.data + it.text.count;
+        }
+    }
+
+    return range_to_string(c0, c1);
+}
+
 #scope_file
 
 peak :: () -> u8 #expand {
@@ -263,7 +277,8 @@ Lexer :: struct {
     
     tokens: [..] Token;
     
-    at: *u8;
+    at: *u8; // cursor
+    line: s32 = 1;
 }
 
 Token :: struct {
@@ -367,11 +382,8 @@ KEYWORDS_TABLE :: #run -> Table(string, bool) {
 }
 
 KEYWORDS :: string.[
-    // "true", "false", "null", "string", 
-    // "bool", "boolean", "double", "array", "float", "int", "integer"
-
     "if", "else", "elseif", "return", "for", "while", "do", "fn", "class", "enum", "const", "define", "yield", "static",
     "continue", "break", "default", "as", "assert", "use", "namespace", "extends", "trait", "interface", "foreach",
-    "public", "private", "protected", "defer", "cast", "case", "void", "never", "switch", "match", "die", "exit", "global",
+    "public", "private", "protected", "defer", "cast", "case", "switch", "match", "die", "exit", "global",
     "function", "new", "try", "catch", "throw"
 ];
