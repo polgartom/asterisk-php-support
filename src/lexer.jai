@@ -225,6 +225,10 @@ tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
     if eat_if_match_with("/*") {
         return .BLOCK_COMMENT_END;
     }
+    
+    if eat_if_match_with("...") {
+        return .THREE_DOT;
+    }
 
     return .INVALID;
 }
@@ -355,6 +359,8 @@ Token_Kind :: enum u8 {
     LINE_COMMENT;  // //
     BLOCK_COMMENT_START; // /*
     BLOCK_COMMENT_END;   // */
+
+    THREE_DOT; // ...
 
     INVALID;
     UNKNOWN;
