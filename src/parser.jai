@@ -48,7 +48,7 @@ parse_class :: (using parser: *Parser) -> bool {
     location := Location.{
         pos=t.pos,
         line=t.line,
-
+        filename=filename
     };
 
     name, ok := get_namespaced_name(parser);
