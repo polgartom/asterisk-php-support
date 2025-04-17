@@ -1,393 +1,208 @@
-parse :: (parser: *Parser) {
-    t := get();
-    if t.kind == .EOF {
-        log_error("[%] Nothing to do!\n", #procedure_name());
-        return;
-    }
+parse :: (using parser: *Parser) {
+    assert(lexer != null);
 
-    while true {
-        t = get();
-        if t.kind == .EOF break;
-
-        if t.kind == {
-            case .KEYWORD;
-                if t.text == "namespace" {
-                    parse_namespace(parser);
-
-                } else if t.text == "class" {
-                    parse_class(parser);
-
-                    // if t.kind != .RIGHT_BRACE {
-                    //     log_error("Expected '}' after class definition, '%' given.\n", t.kind);
-                    //     parser.failed = true;
-                    //     break;
-                    // }
-
-                } else if t.text == "use" {
-                    parse_use(parser);
-                }
-            case .LINE_COMMENT;
-                parse_line_comment(parser);
-            case .BLOCK_COMMENT_START;
-                parse_block_comment(parser);
-        }
-
-        next();
-    }
-}
-
-parse_class :: (parser: *Parser) {
-    t := get();
-    assert(t.kind == .KEYWORD && t.text == "class");
-    
-    t = next();
-    if t.kind != .IDENTIFIER {
-        log_error("Unexpected class name '%', expecting an identifier.", t.text);
-        parser.failed = true;
-        return;
-    }
-
-    namespace := "";
-    if parser.scope then namespace = parser.scope.name;
-
-    fqn := join(namespace, t.text, separator = "\\");
-    _, found := table_find(*definitions, fqn);
-    if found {
-        log_error("Definition of the '%' is already parsed.", fqn);
-        free(fqn);
-        return;
-    }
-
-    class: *Class_Defn;
-    _, found = table_find(*definitions, fqn);
-    
-    if !found {
-        class = cast(*Class_Defn) add_definition(fqn, .CLASS, parser.scope);
-        class.resolved = true;
-    } else {
-        report_error(parser, "We found a redefinition of the % class, skipping...\n", fqn);
-        skip_tokens_until(parser, .EOF);
-        return;
-    }
-
-    t = next();
-    
-    if t.text == "extends" {
-        t = next();
-        if t.kind != .IDENTIFIER {
-            log_error("Unexpected parent class name '%', expecting an identifier after 'extends' keyword.", t.text);
-            parser.failed = true;
-            return;
-        }
-        
-        defn, found := find_defn_in_imports(parser, t.text);
-        if !found {
-            //ll("extends> % of %\n", t.text, fqn);
-            //fqn := copy_string(t.text);
-            defn = add_definition(copy_string(t.text), .CLASS);
-            defn.resolved = false;
-        }
-        
-        class.extends = cast(*Class_Defn) defn;
-        
-        t = next();
-    } 
-    
-    if t.text == "implements" {
-        t = next();
-        
-        expecting_identifier := true;
-        
-        while true {
-            if expecting_identifier {
-                if t.kind != .IDENTIFIER {
-                    log_error("Unexpected interface name '%', expecting an identifier after 'implements' keyword.\n", t.text);
-                    parser.failed = true;
-                    return;
-                }
-                
-                // @Todo: Try to find the definition
-                defn := New(Defn);
-                defn._type = .INTERFACE;
-                defn.name = copy_string(t.text);
-                defn.resolved = false;
-                
-                array_add(*class.implements, defn);
-                
-                t = next();
-                
-            } else {
-                if t.kind == .COMMA {
-                    expecting_identifier = true;
-                    t = next();
-                } else if t.kind == .LEFT_BRACE {
-                    break;
-                } else {
-                    log_error("Expected comma ',' or left brace '{' after interface '%' identifier.\n", t.text);
-                    parser.failed = true;
-                    return;
-                }
-            }
-        }
-        
-    }
-
-    if t.kind != .LEFT_BRACE {
-        log_error("Unexpected '{' token after '%' class declaration, expected '{'.\n", t.text);
-        parser.failed = true;
-        return;
-    }
-
-    parser.block_index += 1;
-    class.block_index = parser.block_index;
-    parser.scope = class;
-
-    // @Todo: Parse class definition
-
-    t = next();
+    // We will skip the simicolons right here, so that's the parsing pattern we use.
     while t.kind != .EOF {
+
         if t.kind == .KEYWORD {
-            if t.text == {
-                case "const"; {
-                    // @Todo: parse const value
-                    skip_tokens_until(parser, .SEMICOLON);
+            if t.text == "namespace" {
+                ok := set_namespace(parser);
+                if !ok return;
+
+            } else if t.text == "use" {
+                if !scope {
+                    ok := parse_global_imports(parser);
+                    if !ok return;
+
+                } else if scope.kind == .CLASS {
+                    // @Todo: Parse trait imports
+                } else {
+                    report_error(parser, "You can't do import right here.\n");
                 }
-                case "public"; #through;
-                case "protected"; #through;
-                case "private";
-                    ok := parse_property(parser);
-                    if !ok {
-                        report_error(parser, "Invalid property\n");
-                        assert(false); // @Temporary
-                        return;
-                    }
-            }
-        } else if t.kind == .LEFT_BRACE {
-            parser.block_index += 1;
-        } else if t.kind == .RIGHT_BRACE {
-            // We want to continue the parse if got back into the class's block, so we need to wait for the next .RIGHT_BRACE
-            parser.block_index -= 1;
-            if parser.block_index+1 == class.block_index {
-                ll("found end of the '%' class.\n", class.name);
-                return;
+            } else if t.text == "class" {
+                ok := parse_class(parser);                
+                if !ok return;
             }
         }
 
-        t = next();
+        eat_token(parser);
     }
 
 }
 
-map_property_visibility :: (s: string) -> Property_Visibility {
-    if s == {
-        case "public";    return .PUBLIC;
-        case "protected"; return .PROTECTED;
-        case "private";   return .PRIVATE;
-    }
+parse_class :: (using parser: *Parser) -> bool {
+    assert(t.text == "class");
+    eat_token(parser);
 
-    return .NONE;
-}
-
-parse_property :: (parser: *Parser) -> bool {
-    if !parser.scope || parser.scope._type != .CLASS {
+    if scope {
+        report_error(parser, "Invalid class declaration/definition in '%' scope.\n", scope.name);
         return false;
     }
 
-    assert(parser.scope._type == .CLASS);
-
-    t := get();
-
-    visibility := map_property_visibility(t.text);
-    if visibility == .NONE {
-        log_error("Invalid property visibility\n");
-        parser.failed = true;
+    // It is correct?
+    if t.kind == .BACKSLASH {
+        report_error(parser, "Class definition cannot start with '\\'.\n");
         return false;
     }
 
-    t = next();
+    location := Location.{
+        pos=t.pos,
+        line=t.line,
 
-    scope := cast(*Class_Defn) parser.scope;
-    type_defn: *Defn;
+    };
 
-    is_static := false;
-    if t.text == "static" {
-        is_static = true;
-        t = next();
-    }
-
-    is_const := false;
-    if t.text == "const" {
-        if is_static {
-            log_error("'const' not expected after 'static' keyword.\n");
-            parser.failed = true;
-            return false;
+    name, ok := get_namespaced_name(parser);
+    if !ok {
+        if !error_reported {
+            report_error(parser, "Invalid class name '%'\n", name);
         }
-    
-        is_const = true;
-        t = next();
-        
-        if t.kind != .IDENTIFIER {
-            log_error("Identifier expected after 'const' but '%' given.\n", t.text);
-            return false;
-        }
-        
-        defn := New(Variable_Defn);
-        defn.name = copy_string(t.text);
-        defn._type = .VARIABLE;
-        defn.scope = scope;
-        defn.is_const = true;
-        defn.is_static = false;
-        defn.visibility = visibility;
-        array_add(*defn.types, type_defn);
-        array_add(*scope.properties, defn);
-
-        t = next();
-
-        return skip_tokens_until(parser, .SEMICOLON);
-    }
-
-    if t.kind == .IDENTIFIER {
-        // Maybe type
-
-        valid, name := parse_namespaced_name(parser);
-        if !valid {
-            parser.failed = true;
-            return false;
-        }
-
-        type_defn=, found := table_find(*definitions, name);
-        if !found {
-            type_defn, found = find_defn_in_imports(parser, name);
-            if !found {
-                fqn := copy_string(name);
-                type_defn = add_definition(fqn, .UNKNOWN);
-                type_defn.resolved = false;
-            }
-        }
-
-        t = get();
-    }
-    
-    if type_defn != null && t.kind != .DOLLAR {
-        log_error("Expects a '$' after the type, '%' given.\n", t.text);
-        parser.failed = true;
         return false;
     }
 
-    if t.kind == .DOLLAR {
-        t = next();
-        if t.kind != .IDENTIFIER {
-            log_error("Expected an identifier after '$', '%' given.\n", t.text);
-            parser.failed = true;
-            return false;
-        }
+    fqn := ifx namespace then join(namespace, name, separator = "\\") else copy_string(name);
 
-        // @Todo: Primitive type inference
+    decl := add_decl(fqn, .CLASS);
+    decl.location = location;
 
-        defn := New(Variable_Defn);
-        defn.name = copy_string(t.text);
-        defn._type = .VARIABLE;
-        defn.scope = scope;
-        defn.is_static = is_static;
-        defn.visibility = visibility;
-        array_add(*defn.types, type_defn);
-        array_add(*scope.properties, defn);
+    defn := New(Definition);
+    decl.defn = defn;
+    defn.decl = decl;
+    defn.location = location;
 
-        skip_tokens_until(parser, .SEMICOLON);
-        
-    } else if t.text == "function" {
-        t = next();
-        if t.kind != .IDENTIFIER {
-            log_error("Expected an identifier after 'function', '%' given.\n", t.text);
-            parser.failed = true;
-            return false;
-        }
+    scope = decl;
 
-
-        fn_defn := New(Function_Defn);
-        
-        fqn := join(parser.scope.name, t.text, separator="\\");
-        fn_defn.name = fqn;
-
-        fn_defn._type = .FUNCTION;
-        fn_defn.scope = scope;
-        fn_defn.is_static = is_static;
-        fn_defn.visibility = visibility;
-
-        t = next();
-        if t.kind != .LEFT_PAREN {
-            log_error("Expected a '(' after function name, '%' given.\n", t.text);
-            parser.failed = true;
-            return false;
-        }
-        t = next();
-
-        ok, params := parse_comma_separated_function_parameter_list(parser);
-        if !ok {
-            report_error(parser, "Invalid parameter list\n");
-            parser.failed = true;
-            return false;
-        }
-        t = get();
-        
-        if t.kind != .RIGHT_PAREN {
-            log_error("Expected a ')' after function parameters, '%' given.\n", t.text);
-            parser.failed = true;
-            return false;
-        }
-        t = next();
-
-        fn_defn.parameters = params;
-        array_add(*scope.methods, fn_defn); // At this point, it's kind of valid, so we can add to the method list
-
-        if t.kind == .COLON {
-            t = next();
-            found, return_types := parse_pipe_separated_type_list(parser);
-            if found {
-                fn_defn.return_types = return_types;
-            }
-        }
-
-        t = get();
-
-        if t.kind == .SEMICOLON {
-
-        } else if t.kind == .LEFT_BRACE {
-            parser.block_index += 1;
-            fn_defn.block_index = parser.block_index;
-            
-            while t.kind != .EOF {
-                if t.kind == .LEFT_BRACE {
-                    parser.block_index += 1;
-                } else if t.kind == .RIGHT_BRACE {
-                    parser.block_index -= 1;
-                    if parser.block_index == fn_defn.block_index {
-                        //ll("found end of the '%' method.\n", fn_defn.name);
-                        return true;
-                    }
-                }
-
-                t = next();
-            }
-        }
-
-        return false;
-
-    } else {
-        log_error("'$' or 'function' are expected instead of '%'.\n", t.text);
-        parser.failed = true;
-        return false;
-    }
-
-    t = next();
+    log("Class definition added '%'\n", decl.name);
 
     return true;
 }
 
-// @Cleanup: Naming
-parse_namespaced_name :: (parser: *Parser) -> bool, string {
-    t := get();
+// @Todo: Handle this variant too:
+// use Mizo\Web\ {
+//    Php\WebSite,
+//    Php\KeyWord,
+//    Php\UnicodePrint,
+//    JS\JavaScript, 
+//    function JS\printTotal, 
+//    function JS\printList, 
+//    const JS\BUAIKUM, 
+//    const JS\MAUTAM
+// };
+parse_global_imports :: (using parser: *Parser) -> bool {
+    assert(t.text == "use");
+    eat_token(parser);
 
+    // It is correct?
+    if t.kind == .BACKSLASH {
+        report_error(parser, "Import FQN cannot start with '\\' (I guess).\n");
+        return false;
+    }
+
+    name, ok := get_namespaced_name(parser);
+    if !ok {
+        if !error_reported {
+            report_error(parser, "Invalid FQN '%'\n", name);
+        }
+        return false;
+    }
+
+    decl, found := find_decl(name);
+    if !found {
+        fqn := copy_string(name);
+        decl = add_decl(fqn, .UNKNOWN);
+    }
+
+    if t.text == "as" {
+        ok=, list := parse_comma_separated_import_aliases(parser, decl);
+        if !ok return false;
+
+        // @Todo: Check for import name conflicts
+        for name: list {
+            import := array_add(*imports);
+            import.name = copy_string(name);
+            import.decl = decl;
+            import.alias_for = decl; // Do we need this?
+            import.is_alias = true;
+        }
+    }
+
+    // Do we want to handle imports that end with an open bracket?
+    ok = expects_and_eat_token(parser, .SEMICOLON);
+    if !ok return false;
+
+    log("Import added '%'\n", decl.*);
+
+    if t.text == "use" {
+        return parse_global_imports(parser);
+    }
+
+    return true;
+}
+
+set_namespace :: (using parser: *Parser) -> bool {
+    if scope {
+        report_error(parser, "You can't specify a namespace here, because we're not in the global scope. Current scope: '%'\n", scope.name);
+        return false;        
+    }
+
+    if namespace {
+        report_error(parser, "We already have a namespace as '%'!", namespace);
+        return false;
+    }
+
+    if imports.count {
+        // It' not an error if we currently in the global scope
+        report_error(parser, "We already have a namespace as '%'!", namespace);
+        return false;
+    }
+
+    if t.kind == .BACKSLASH {
+        report_error(parser, "Namespace cannot start with '\\'");
+        return false;
+    }
+
+    eat_token(parser);
+    name, ok := get_namespaced_name(parser);
+    if !ok {
+        if !error_reported {
+            report_error(parser, "Invalid namespace '%'\n", name);
+        }
+        return false;
+    }
+
+    // Do we want to handle namespaces that end with an open bracket?
+    if t.kind != .SEMICOLON {
+        report_error(parser, "';' expected but '%' given.\n", t.text);
+        return false;
+    }
+
+    namespace = copy_string(name);
+
+    return true;
+}
+
+expects_and_eat_token :: (using parser: *Parser, expects: string) -> bool {
+    if t.text != expects {
+        report_error(parser, "'%' expected, '%' given.", expects, t.text);
+        return false;
+    }
+
+    eat_token(parser);
+    return true;
+}
+
+expects_and_eat_token :: (using parser: *Parser, expects: Token_Kind) -> bool {
+    if t.kind != expects {
+        report_error(parser, "'%' expected, '%' given.", expects, t.kind);
+        return false;
+    }
+
+    eat_token(parser);
+    return true;
+}
+
+get_namespaced_name :: (using parser: *Parser) -> string, bool {
+    if !t.text return "", false;
+    
     starts_with_backslash := false;
     backslash             := false;
 
@@ -400,17 +215,14 @@ parse_namespaced_name :: (parser: *Parser) -> bool, string {
     c1 := t.text.data;
 
     while true {
-        t = get();
         if t.kind == .EOF {
-            parser.failed = true;
-            return false, "";
+            return "", false;
         }
 
         if t.kind == .BACKSLASH {
             if backslash {
-                log_error("Unexpected namespaced name '%', expecting an identifier after backslash.\n", range_to_string(c0, c1));
-                parser.failed = true;
-                return false, "";
+                report_error(parser, "Unexpected namespaced name '%', expecting an identifier after backslash.\n", range_to_string(c0, c1));
+                return "", false;
             }
 
             backslash = true;
@@ -422,436 +234,147 @@ parse_namespaced_name :: (parser: *Parser) -> bool, string {
 
         } else {
             if backslash {
-                log_error("Unexpected namespaced name '%', expecting an identifier after backslash.\n", range_to_string(c0, c1));
-                parser.failed = true;
-                return false, "";
+                report_error(parser, "Unexpected namespaced name '%', expecting an identifier after backslash.\n", range_to_string(c0, c1));
+                return "", false;
             }
-
-            // ll("> |%|\n", range_to_string(c0, c1));
 
             break;
         }
 
-        next();
+        eat_token(parser);
     }
 
     s := range_to_string(c0, c1);
-    return s.count > 0, s;
+    return s, true;
 } 
 
-add_definition :: (fqn: string, $type: Defn_Type, scope: *Defn = null) -> *Defn {
-    defn: *Defn;
+parse_comma_separated_import_aliases :: (using parser: *Parser, alias_for: *Declaration) -> (success: bool #must, list: [] string) {
+    assert(t.text == "as");
+    assert(alias_for != null);
 
-    #if type == {
-        case .UNKNOWN;
-            defn = New(Defn);
-            defn.resolved = false;
-        case .PRIMITIVE;
-            defn = New(Defn);
-            defn.resolved = true;
-            defn.intrinsic = true;
-        case .CLASS;
-            defn = New(Class_Defn);
-        case .VARIABLE;
-            defn = New(Variable_Defn);
-            defn.resolved = true; // do we want to explicitly specify it. The variable always resolved, except its type
-        case .FUNCTION;
-            defn = New(Function_Defn);
-        case .NAMESPACE;
-            defn = New(Defn);
-            assert(scope == null);
+    eat_token(parser);
+
+    if t.kind == .BACKSLASH {
+        report_error(parser, "Import alias cannot start with '\\' (I guess)");
+        return false, .[];
     }
 
-    assert(defn != null, "% % %\n", fqn, type, scope);
+    list: [..] string;
+    list.allocator = temp;
 
-    defn.name  = fqn;
-    defn._type = type;
-    defn.scope = scope;
-    table_add(*definitions, defn.name, defn);
+    while true {
+        name, ok := get_namespaced_name(parser);
+        if !ok {
+            if !error_reported {
+                report_error(parser, "Invalid alias name '%'\n", name);
+            }
+            return false, .[];
+        }
 
-    return defn;
+        if t.kind != .COMMA break;
+        eat_token(parser);
+    }
+
+    return true, list;
 }
 
-// https://www.php.net/manual/en/language.namespaces.rules.php
-parse_namespace :: (parser: *Parser) {
-    t := get();
-    assert(t.kind == .KEYWORD && t.text == "namespace");
-    next();
-    
-    valid, name := parse_namespaced_name(parser);
-    if !valid {
-        parser.failed = true;
-        return;
-    }
-
-    t = get();
-    if t.kind != .SEMICOLON {
-        log_error("Namespace '%' must end with a ';'.\n", name);
-        parser.failed = true;
-        return;
-    }
-
-    assert(parser.scope == null);
-
-    defn := New(Defn);
-    defn.name = copy_string(name);
-    defn._type = .NAMESPACE;
-    defn.resolved = true;
-
-    // array_add(*parser.definitions, defn);
-    parser.scope = defn;
+find_decl :: (fqn: string) -> *Declaration, bool {
+    decl, found := table_find(*declarations, fqn);
+    return decl, found;
 }
 
-parse_use :: (parser: *Parser) {
-    t := get();    
-    assert(t.kind == .KEYWORD && t.text == "use");
-    t = next();
+add_decl :: (fqn: string, kind: Declaration_Kind) -> *Declaration {
+    decl := New(Declaration);
+    decl.kind = kind;
+    decl.name = fqn;
 
-    scope := parser.scope;
-    is_trait_load := scope && scope._type == .CLASS;
-    
-    if is_trait_load {
-        
-    } else {
-        valid, name := parse_namespaced_name(parser); // FQN name? full qualified name
-        if !valid {
-            parser.failed = true;
-            return;
-        }
-        
-        //ll("%\n", name);
-        
-        if !scope || scope._type == .NAMESPACE {
-            defn, found := table_find(*definitions, name);
-            if !found {
-                //ll("-> % % ; %\n", valid, name, ifx scope then scope._type == .NAMESPACE else false);
-                defn = add_definition(copy_string(name), .UNKNOWN);
-            }
-            
-            array_add(*parser.imports, defn);
-            
-            skip_tokens_until(parser, .SEMICOLON);
-            
-        } else {
-            log_error("Invalid import %\n", name); // @Todo: Better message
-            parser.failed = true;
-            return;
-        }
-    }
+    _, found := table_find(*declarations, fqn);
+    assert(!found, "'%' is already added.\n", fqn);
+
+    table_add(*declarations, fqn, decl);
+
+    return decl;
 }
 
-parse_block_comment :: (parser: *Parser) {
-    t := get();
-    assert(t.kind == .BLOCK_COMMENT_START);
-    
-    c0 := t.text.data;
-    while t.kind != .EOF {
-        t = next();
-        if t.kind == .BLOCK_COMMENT_END {
-            c1 := t.text.data;
-            ll("> %\n", string.{c1-c0, c0});
-            
-            next();
-            return;
-        }
+eat_token :: (using p: *Parser) -> Token {
+    if at+1 < tokens.count {
+        at += 1;
+        t = tokens[at];
     }
 
+    return t;
 }
 
-parse_line_comment :: (parser: *Parser) {
-    t := get();
-    assert(t.kind == .LINE_COMMENT);
-
-    while t.kind != .EOF {
-        t = next();
-        if t.kind == .LF {
-            next();
-            return;
-        }
+peak_next_token :: (using p: *Parser) -> Token {
+    if at+1 < tokens.count {
+        return tokens[at+1];
     }
 
-}
-
-parse_pipe_separated_type_list :: (parser: *Parser) -> bool, [..] *Defn {
-    result: [..] *Defn;
-
-    t := get();
-    if !(t.kind == .IDENTIFIER || t.kind == .BACKSLASH || t.kind == .QUESTION_MARK) return false, result;
-
-    type_parsed := false;
-    while t.kind != .EOF {
-        // ll("> %\n", t);
-
-        if t.kind == .QUESTION_MARK {
-            type_defn, found := table_find(*definitions, "null");
-            assert(found, "NULL type not defined, wtf?\n");
-            
-            array_add(*result, type_defn);
-            
-            t = next();
-        }
-
-        if t.kind == .IDENTIFIER || t.kind == .BACKSLASH {
-            if type_parsed return false, result;
-            type_parsed = true;
-
-            ok, name := parse_namespaced_name(parser);
-            if !ok return false, result;
-
-            t = get();
-
-            namespaced_globally := false;
-            if starts_with(name, "\\") {
-                namespaced_globally = true;
-                advance(*name, 1);
-            }
-
-            type_defn, found := table_find(*definitions, name);
-            if !found {
-                name = copy_string(name);
-                type_defn = add_definition(name, .UNKNOWN, parser.scope);
-            }
-
-            array_add(*result, type_defn);
-
-            continue;
-
-        } else if t.kind == .PIPE {
-            if !type_parsed return false, result;
-            type_parsed = false;
-        } else {
-            // ll("%\n", get());
-            break;
-        }
-
-        t = next();
-    }
-
-    // ll("last token: %\n", t);
-
-    return type_parsed, result;
-}
-
-parse_comma_separated_function_parameter_list :: (parser: *Parser) -> bool, [..] *Variable_Defn {
-    result: [..] *Variable_Defn;
-
-    t := get();
-    if !(t.kind == .IDENTIFIER || t.kind == .DOLLAR || t.kind == .QUESTION_MARK) return true, result;
-
-    // @Todo: The visibility keywords are valid in the __constructor(), so we need to check that at some point.
-
-    param_parsed := false;
-    while t.kind != .EOF {
-        has_type_declaration, types := parse_pipe_separated_type_list(parser);
-        t = get();
-
-        if t.kind == .THREE_DOT {
-            // https://www.php.net/manual/en/functions.arguments.php
-            // ... can also be used when calling functions to unpack an array or Traversable variable or literal into the argument list:
-            t = next();
-            
-            if t.kind != .DOLLAR {
-                report_error(parser, "A '$' expected after '...', % given.\n", t.text);
-                return false, result;
-            }
-        }
-
-        if t.kind == .DOLLAR {
-            if param_parsed {
-                return false, result;
-            }
-            param_parsed = true;
-
-            t = next();
-            if t.kind != .IDENTIFIER {
-                report_error(parser, "Identifier is expected after '$' in the function parameter list, '%' given\n", t.text);
-                return false, result;
-            }
-
-            name := copy_string(t.text);
-            defn := cast(*Variable_Defn) add_definition(name, .VARIABLE, parser.scope);
-            defn.types = types;
-            array_add(*result, defn);
-
-            t = next();
-
-            if t.kind == .ASSIGN {
-                t = next();
-                ok, types := parse_pipe_separated_type_list(parser);
-
-                if !ok || types.count > 1 return false, result;
-                t = get();
-            }
-
-            continue;
-
-        } else if t.kind == .COMMA {
-            if !param_parsed {
-                return false, result;
-            }
-            param_parsed = false;
-
-        } else {
-            break;
-        }
-
-        t = next();
-    }
-
-    // ll("last token: %\n", t);
-
-    return true, result;
-}
-
-find_defn_in_imports :: (using parser: *Parser, name: string) -> *Defn, bool {
-    namespaced_name := sprint("\\%", name);
-    defer free(namespaced_name);
-    
-    for imports {
-        if it.name == name || ends_with(it.name, namespaced_name) {
-            return it, true;
-        }
-    }
-
-    return null, false;
-}
-
-skip_tokens_until :: (using parser: *Parser, kind: Token_Kind) -> (found: bool) {
-    t := get();
-    while t.kind != .EOF {
-        if t.kind == kind return true;
-        t = next();
-    }
-
-    return false;
+    return .{kind=.EOF, line=0, pos=0};
 }
 
 report_error :: (parser: *Parser, fmt: string, args: .. Any) {
-    line_str := get_line_as_string(parser.lexer, get().line);
+    parser.failed = true;
+    parser.error_reported = true;
+
+    line_str := get_line_as_string(parser.lexer, parser.t.line);
     s := tprint(fmt, ..args);
-    print("[error] |%| %:% -> %\n", line_str, get().line, get().pos, s);
+    log_error("[error] |%| %:% -> %\n", line_str, parser.t.line, parser.t.pos, s);
 } @PrintLike
 
-Class_Defn :: struct {
-    #as using base: Defn;
-    base._type = .CLASS;
 
-    extends: *Class_Defn;
-    implements: [..] *Defn; // @Todo: Trait_Defn
-    properties: [..] *Variable_Defn; 
-    methods: [..] *Function_Defn;
+declarations: Table(string, *Declaration);
 
-    is_abstract: bool;
-}
-
-Variable_Defn :: struct {
-    #as using base: Defn;
-    base._type = .VARIABLE;
-
-    types: [..] *Defn;
-
-    visibility: Property_Visibility;
-    is_const: bool;
-    is_static: bool;
-    is_abstract: bool;
-}
-
-Function_Defn :: struct {
-    #as using base: Defn;
-    base._type = .FUNCTION;
-
-    return_types: [..] *Defn;
-    parameters: [..] *Variable_Defn;
-
-    visibility: Property_Visibility;
-    is_const: bool;
-    is_static: bool;
-    is_abstract: bool;
-}
-
-Defn :: struct {
-    name: string; // @Cleanup rename it to fqn (Full Qualified Name)
-    _type: Defn_Type; // @Cleanup rename it to kind
-
-    scope: *Defn;
-    block_index: s32;
-
-    line: s32;
-    pos:  s32;
-    
-    resolved: bool;
-    intrinsic: bool;
-
-}
-
-Defn_Type :: enum u8 {
-    UNKNOWN :: 0;
-    
-    PRIMITIVE;
-
-    NAMESPACE;
-    USE;
-    
-    CLASS;
-    INTERFACE;
-    TRAIT;
-    
-    PARAMETER;
-
-    VARIABLE;
-    FUNCTION;
-}
-
-Property_Visibility :: enum u8 {
-    NONE :: 0;
-    PUBLIC;
-    PROTECTED;
-    PRIVATE;
-}
 
 Parser :: struct {
     lexer: *Lexer;
     tokens: [] Token;
+    t := Token.{kind=.EOF};
+    at: s32;
+
+    failed: bool;
+    error_reported: bool;
+
+    namespace: string;
+    scope: *Declaration;
+    imports: [..] Import;
 
     filename: string;
+}
 
-    failed := false;
-
-    scope: *Defn;
-    block_index: s32;
-    // definitions: [..] *Defn;
+Declaration :: struct {
+    name: string;
+    kind: Declaration_Kind; 
+    scope: *Declaration;
     
-    imports: [..] *Defn;
+    defn: *Definition;
+    location: Location;
 }
 
-definitions: Table(string, *Defn);
-
-#scope_file
-
-next :: () -> Token #expand {
-   if `parser.tokens[0].kind == .EOF return `parser.tokens[0];
-   
-   `parser.tokens.data += 1;
-   `parser.tokens.count -= 1;
-   
-   return `parser.tokens[0];
+Declaration_Kind :: enum u8 {
+    UNKNOWN :: 0;
+    PRIMITIVE;
+    CLASS;
+    TRAIT;
+    INTERFACE;
+    FUNCTION;
 }
 
-get :: () -> Token #expand {
-   return `parser.tokens[0]; 
-}
-
-is_eof :: () -> bool #expand {
-    return get().kind == .EOF;
-}
-
-eat_if_match_with :: (with: string) -> (did_eat: bool) #expand {
-    if is_eof() return false;
+Definition :: struct {
+    decl: *Declaration;
     
-    if get().text == with {
-        next();
-        return true;
-    }
-    
-    return false;
+    location: Location;
+}
+
+Import :: struct {
+    name: string;
+    decl: *Declaration;
+    is_alias: bool;
+    alias_for: *Declaration; // Do we need this? We have "name" and "decl" already, so what's for?
+}
+
+Location :: struct {
+    pos: s32;
+    line: s32;
+    filename: string;
 }

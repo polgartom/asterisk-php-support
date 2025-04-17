@@ -20,45 +20,66 @@ main :: () {
         print("\n");
     }
     
-    init(*definitions, 256);
+    // init(*definitions, 256);
     
-    add_definition("bool", .PRIMITIVE);
-    add_definition("string", .PRIMITIVE);
-    add_definition("int", .PRIMITIVE);
-    add_definition("float", .PRIMITIVE);
-    add_definition("double", .PRIMITIVE);
-    add_definition("array", .PRIMITIVE);
-    add_definition("void", .PRIMITIVE);
-    add_definition("null", .PRIMITIVE);
-    add_definition("null", .PRIMITIVE);
-    add_definition("object", .PRIMITIVE);
-    add_definition("callable", .PRIMITIVE);
-    add_definition("resource", .PRIMITIVE);
-    add_definition("never", .PRIMITIVE);
-    add_definition("true", .PRIMITIVE);
-    add_definition("false", .PRIMITIVE);
+    // add_definition("bool", .PRIMITIVE);
+    // add_definition("string", .PRIMITIVE);
+    // add_definition("int", .PRIMITIVE);
+    // add_definition("float", .PRIMITIVE);
+    // add_definition("double", .PRIMITIVE);
+    // add_definition("array", .PRIMITIVE);
+    // add_definition("void", .PRIMITIVE);
+    // add_definition("null", .PRIMITIVE);
+    // add_definition("null", .PRIMITIVE);
+    // add_definition("object", .PRIMITIVE);
+    // add_definition("callable", .PRIMITIVE);
+    // add_definition("resource", .PRIMITIVE);
+    // add_definition("never", .PRIMITIVE);
+    // add_definition("true", .PRIMITIVE);
+    // add_definition("false", .PRIMITIVE);
 
-    scan_dir("./src/app");
-    
+    // scan_dir("/var/www/oe-finance/app");
     // print_scan_result();
+
+    print("\n\n");
+
+    scan_file("./input.php");
 }
 
 scan_file :: (filename: string) -> (success: bool) {
+    log("%\n", filename);
+    
     lexer: Lexer;    
     ok := tokenize(*lexer, filename);
     if !ok return false;
     
+    #if 0 {
+        log("[tokens]:\n");
+        for lexer.tokens {
+            log("> %\n", it);
+        }
+    }
+
     parser: Parser;
     parser.lexer  = *lexer;
     parser.tokens = lexer.tokens;
     parser.filename = filename;
+    if parser.tokens then parser.t = parser.tokens[0];
     parse(*parser);
     
-    if parser.failed return false;
+    if parser.failed {
+        return false;
+    }
+
+    #if 0 {
+        log("[parser]:\n");
+        log("%\n", parser);
+    }
     
     return true;
 }
 
+/*
 print_scan_result :: () {
     for definitions {
         if it._type == {
@@ -123,6 +144,7 @@ scan_dir :: (dir: string) {
     l: Lexer;
     visit_files(dir, recursive=true, *l, visitor, visit_directories=true, follow_directory_symlinks=false);
 }
+*/
 
 dd :: (fmt: string, args: .. Any) #expand {
     print("\n---------DD---------\n");
@@ -136,7 +158,6 @@ ll :: (fmt: string, args: .. Any) #expand {
     s := tprint(fmt, ..args);
     print("[%] %", #procedure_name(), s);
 } @PrintLike
-
 
 
 #load "lexer.jai";

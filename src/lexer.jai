@@ -1,5 +1,9 @@
 tokenize :: (using l: *Lexer, filename: string) -> bool {
-    s := read_entire_file(filename);
+    s, ok := read_entire_file(filename);
+    if !ok {
+        log_error("Unable to locate '%' file.\n", filename);
+        return false;
+    }
     s = replace_crlf_to_lf(s, autofree=true);
     
     index := find_index_from_left(s, "<?php");
@@ -89,12 +93,14 @@ tokenize_digit :: (using l: *Lexer) {
 
         if next_char == #char "x" || next_char == #char "X" {
             // Hexadecimal format
-            
-            assert(false, "TODO\n");
+            at += 2;
+            while is_digit(at.*) { at += 1; }
+
         } else if next_char == #char "b" {
             // Binary format
-
-            assert(false, "TODO\n");
+            at += 2;
+            while at.* == #char "0" || at.* == #char "1" { at += 1; }
+            
         }
     }
 
