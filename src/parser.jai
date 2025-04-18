@@ -73,6 +73,52 @@ parse_class :: (using parser: *Parser) -> bool {
 
     log("Class definition added '%'\n", decl.name);
 
+    // eat_token(parser);
+
+    if t.text == "extends" {
+        eat_token(parser);
+        
+        name, ok := get_namespaced_name(parser);
+        if !ok || !name return false;
+
+        extends_decl: *Declaration;
+        namespaced_globally := false;
+
+        if starts_with(name, "\\") {
+            namespaced_globally = true;
+
+            name = advance(name, 1);
+            extends_decl = find_decl(name);
+
+        } else {
+            // @Todo: We may not find the class because it has the current namespace, so we 
+            // may need to make a queue for these unresolved type declarations or something
+            // kacsa
+            import, found := find_global_import(parser, name);
+            if found {
+                assert(import.decl != null);
+                extends_decl = import.decl;
+
+            } else {
+                log("Import not found '%', maybe it's in the same namespace but we didn't find yet.\n", name);
+            }
+        }
+
+        if !extends_decl {
+            fqn := name;
+            if !namespaced_globally {
+                // Maybe it's in the current namespace, because we didn't find it in the 
+                fqn = ifx namespace then join(namespace, name, separator = "\\") else copy_string(name);
+            }
+
+            // @Todo We do know that is a .CLASS declaration but we don't know its definition's location, so
+            // we should check by giving it an "unresolved" flag instead of checkin the .UNKNOWN kind declarations.
+            extends_decl = add_decl(fqn, .UNKNOWN);
+        }
+
+        log("Extends with '%'\n", extends_decl.*);
+    }
+
     return true;
 }
 
@@ -98,12 +144,7 @@ parse_global_imports :: (using parser: *Parser) -> bool {
     }
 
     name, ok := get_namespaced_name(parser);
-    if !ok {
-        if !error_reported {
-            report_error(parser, "Invalid FQN '%'\n", name);
-        }
-        return false;
-    }
+    if !ok return false;
 
     decl, found := find_decl(name);
     if !found {
@@ -123,6 +164,11 @@ parse_global_imports :: (using parser: *Parser) -> bool {
             import.alias_for = decl; // Do we need this?
             import.is_alias = true;
         }
+    } else {
+        import := array_add(*imports);
+        import.name = copy_string(name);
+        import.decl = decl;
+        import.alias_for = decl; // Do we need this?
     }
 
     // Do we want to handle imports that end with an open bracket?
@@ -162,12 +208,7 @@ set_namespace :: (using parser: *Parser) -> bool {
 
     eat_token(parser);
     name, ok := get_namespaced_name(parser);
-    if !ok {
-        if !error_reported {
-            report_error(parser, "Invalid namespace '%'\n", name);
-        }
-        return false;
-    }
+    if !ok return false;
 
     // Do we want to handle namespaces that end with an open bracket?
     if t.kind != .SEMICOLON {
@@ -245,7 +286,7 @@ get_namespaced_name :: (using parser: *Parser) -> string, bool {
     }
 
     s := range_to_string(c0, c1);
-    return s, true;
+    return s, s.count > 0;
 } 
 
 parse_comma_separated_import_aliases :: (using parser: *Parser, alias_for: *Declaration) -> (success: bool #must, list: [] string) {
@@ -296,6 +337,20 @@ add_decl :: (fqn: string, kind: Declaration_Kind) -> *Declaration {
     return decl;
 }
 
+find_global_import :: (using parser: *Parser, name: string) -> *Import, bool {
+    assert(!starts_with(name, "\\"));
+
+    // log("imports: %\n", imports);
+    for * imports {
+        // log("> compare: '%' <> '%'\n", fqn_last_piece(it.name), name);
+        if fqn_last_piece(it.name) == name {
+            return it, true;
+        }
+    }
+
+    return null, false;
+}
+
 eat_token :: (using p: *Parser) -> Token {
     if at+1 < tokens.count {
         at += 1;
@@ -311,6 +366,13 @@ peak_next_token :: (using p: *Parser) -> Token {
     }
 
     return .{kind=.EOF, line=0, pos=0};
+}
+
+fqn_last_piece :: (fqn: string) -> string {
+    index := find_index_from_right(fqn, "\\");
+    if index == -1 return fqn;
+    index += 1;
+    return slice(fqn, index, fqn.count-index);
 }
 
 report_error :: (parser: *Parser, fmt: string, args: .. Any) {
