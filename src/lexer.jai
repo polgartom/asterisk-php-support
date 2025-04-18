@@ -228,7 +228,7 @@ tokenize_multitoken :: (using l: *Lexer) -> Token_Kind {
     if eat_if_match_with("/*") {
         return .BLOCK_COMMENT_START;
     }
-    if eat_if_match_with("/*") {
+    if eat_if_match_with("*/") {
         return .BLOCK_COMMENT_END;
     }
     
